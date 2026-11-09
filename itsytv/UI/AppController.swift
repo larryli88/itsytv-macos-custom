@@ -99,9 +99,6 @@ final class AppController: NSObject, NSMenuDelegate {
                 icon.size = NSSize(width: 18, height: 18)
                 button.image = icon
             }
-            // Handle clicks ourselves instead of attaching the menu permanently:
-            // a left-click while the remote is closed jumps straight to the last
-            // device; right-click (or any click with the remote open) shows the menu.
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -114,18 +111,23 @@ final class AppController: NSObject, NSMenuDelegate {
         let wantsMenu = event?.type == .rightMouseUp
             || event?.modifierFlags.contains(.control) == true
 
-        // Remote closed + a reachable, paired last device → open it directly.
-        // Everything else (remote open, right-click, no/unreachable last device)
-        // falls back to the dropdown, as before.
-        if !wantsMenu,
-           panel?.isVisible != true,
-           case .disconnected = manager.connectionStatus,
-           let lastID = manager.lastConnectedDeviceID,
-           KeychainStorage.load(for: lastID) != nil,
-           manager.discoveredDevices.contains(where: { $0.id == lastID }) {
-            openRemote(for: lastID)
-        } else {
+        guard !wantsMenu else {
             showMenu()
+            return
+        }
+
+        let defaultDevice = manager.discoveredDevices.first {
+            $0.name == "tv" && KeychainStorage.load(for: $0.id) != nil
+        }
+        guard let defaultDevice else {
+            showMenu()
+            return
+        }
+
+        if panelDeviceID == defaultDevice.id, let panel, panel.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            openRemote(for: defaultDevice.id)
         }
     }
 
@@ -146,7 +148,6 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private var lastKnownStatus: ConnectionStatus = .disconnected
     private var lastKnownDeviceCount: Int = 0
-    private var hasPairedDevice = false
     private var pairingItem: PairingMenuItem?
 
     private func handleStateChange() {
@@ -182,18 +183,6 @@ final class AppController: NSObject, NSMenuDelegate {
             menu.cancelTracking()
             showPanel()
         }
-    }
-
-    private var shouldShowItsyhomePromo: Bool {
-        let hasDevices = hasPairedDevice
-        let isInstalled: Bool = {
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.nickustinov.itsyhome") else {
-                return false
-            }
-            let path = url.path
-            return path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
-        }()
-        return hasDevices && !isInstalled
     }
 
     // MARK: - Menu building
@@ -233,12 +222,6 @@ final class AppController: NSObject, NSMenuDelegate {
             break
         default:
             menu.addItem(NSMenuItem.separator())
-            #if !APPSTORE
-            if shouldShowItsyhomePromo {
-                menu.addItem(createItsyhomePromoItem())
-                menu.addItem(NSMenuItem.separator())
-            }
-            #endif
             let loginItem = createCheckboxItem(
                 title: "Launch at login",
                 isOn: SMAppService.mainApp.status == .enabled
@@ -268,7 +251,6 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func buildDeviceList() {
-        hasPairedDevice = false
         if manager.discoveredDevices.isEmpty {
             let scanning = NSMenuItem(title: "Scanning for devices...", action: nil, keyEquivalent: "")
             scanning.isEnabled = false
@@ -277,7 +259,6 @@ final class AppController: NSObject, NSMenuDelegate {
             let sorted = manager.discoveredDevices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             for device in sorted {
                 let isPaired = KeychainStorage.load(for: device.id) != nil
-                if isPaired { hasPairedDevice = true }
                 let item = createDeviceItem(device: device, isPaired: isPaired)
                 menu.addItem(item)
             }
@@ -403,22 +384,6 @@ final class AppController: NSObject, NSMenuDelegate {
         containerView.onAction = action
 
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.view = containerView
-        return item
-    }
-
-    private func createItsyhomePromoItem() -> NSMenuItem {
-        let width = DS.ControlSize.menuItemWidth
-        let height: CGFloat = 64
-
-        let containerView = ItsyhomePromoView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        containerView.onAction = {
-            if let url = URL(string: "macappstore://apps.apple.com/app/itsyhome/id6758070650") {
-                NSWorkspace.shared.open(url)
-            }
-        }
-
-        let item = NSMenuItem(title: "Itsyhome", action: nil, keyEquivalent: "")
         item.view = containerView
         return item
     }
@@ -1117,84 +1082,6 @@ private final class DigitBoxView: NSView {
         let strokePath = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: DS.Radius.md, yRadius: DS.Radius.md)
         strokePath.lineWidth = 2
         strokePath.stroke()
-    }
-}
-
-// MARK: - Itsyhome promo banner
-
-private final class ItsyhomePromoView: HighlightingMenuItemView {
-
-    private var isHovered = false
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        onMouseEnter = { [weak self] in self?.isHovered = true }
-        onMouseExit = { [weak self] in self?.isHovered = false }
-        setupContent()
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func setupContent() {
-        let width = bounds.width
-        let height = bounds.height
-        let insetX: CGFloat = 4
-        let insetRect = NSRect(x: insetX, y: 0, width: width - insetX * 2, height: height)
-
-        // Icon
-        let iconSize: CGFloat = 32
-        let iconX = insetRect.minX + DS.Spacing.md
-        let iconY = (height - iconSize) / 2
-        let iconView = NSImageView(frame: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
-        iconView.image = Bundle.main.image(forResource: "itsyhome-icon")
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.wantsLayer = true
-        iconView.layer?.cornerRadius = 6
-        iconView.layer?.masksToBounds = true
-        addSubview(iconView)
-
-        // Title
-        let textX = iconX + iconSize + DS.Spacing.sm
-        let chevronSize: CGFloat = 10
-        let textMaxWidth = insetRect.maxX - textX - DS.Spacing.md - chevronSize - DS.Spacing.xs
-        let titleLabel = NSTextField(labelWithString: "HomeKit in menu bar")
-        titleLabel.frame = NSRect(x: textX, y: height / 2 + 1, width: textMaxWidth, height: 17)
-        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        titleLabel.textColor = .white
-        titleLabel.lineBreakMode = .byTruncatingTail
-        addSubview(titleLabel)
-
-        // Subtitle
-        let subtitleLabel = NSTextField(labelWithString: "Try Itsyhome – it's free")
-        subtitleLabel.frame = NSRect(x: textX, y: height / 2 - 16, width: textMaxWidth, height: 15)
-        subtitleLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.75)
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-        addSubview(subtitleLabel)
-
-        // Chevron
-        let chevronX = insetRect.maxX - DS.Spacing.md - chevronSize
-        let chevronY = (height - chevronSize) / 2
-        let chevronView = NSImageView(frame: NSRect(x: chevronX, y: chevronY, width: chevronSize, height: chevronSize))
-        chevronView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
-        chevronView.contentTintColor = NSColor.white.withAlphaComponent(0.75)
-        chevronView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(chevronView)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let insetRect = bounds.insetBy(dx: 4, dy: 0)
-
-        if isHovered {
-            NSColor.selectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4).fill()
-        } else {
-            let gradient = NSGradient(
-                starting: DS.Colors.promoGradientStart,
-                ending: DS.Colors.promoGradientEnd
-            )
-            gradient?.draw(in: NSBezierPath(roundedRect: insetRect, xRadius: 6, yRadius: 6), angle: 0)
-        }
     }
 }
 

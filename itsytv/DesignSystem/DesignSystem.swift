@@ -76,14 +76,6 @@ enum DS {
             }
         }
 
-        static var promoGradientStart: NSColor {
-            NSColor(red: 0.30, green: 0.45, blue: 0.95, alpha: 1)
-        }
-
-        static var promoGradientEnd: NSColor {
-            NSColor(red: 0.65, green: 0.35, blue: 0.90, alpha: 1)
-        }
-
     }
 
     // MARK: - Spacing
