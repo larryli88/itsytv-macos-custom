@@ -234,7 +234,9 @@ Protocol implementation informed by [pyatv](https://github.com/postlund/pyatv), 
 Left-click the status icon to open the paired Apple TV named `tv`. Right-click
 for the device menu, including **Play Chrome YouTube on tv**. Open a YouTube
 video in Chrome's active tab before using the command. Allow Itsytv to control
-Chrome if macOS asks. The command opens the video on the TV from the beginning.
+Chrome if macOS asks. To pass the current playback time, enable **View → Developer → Allow JavaScript
+from Apple Events** in Chrome. Itsytv sends the timestamp when it can read it.
+Whether the video starts at that position depends on the tvOS YouTube app.
 
 Before generating the Xcode project for a fresh checkout, prepare the sibling
 `itsytv-core` checkout with the matching revision and protocol patch:

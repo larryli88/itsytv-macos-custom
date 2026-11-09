@@ -124,11 +124,16 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        if panelDeviceID == defaultDevice.id, let panel, panel.isVisible {
-            panel.makeKeyAndOrderFront(nil)
-        } else {
-            openRemote(for: defaultDevice.id)
+        NSApp.activate(ignoringOtherApps: true)
+        if manager.connectedDeviceID == defaultDevice.id,
+           manager.connectionStatus == .connected || manager.connectionStatus == .connecting {
+            showPanel()
+            panel?.makeKeyAndOrderFront(nil)
+            return
         }
+
+        dismissPanel()
+        connectAndShow(defaultDevice)
     }
 
     /// Pop the status menu by temporarily attaching it, then detach on close
@@ -213,7 +218,23 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        manager.openURL(url, on: device) { [weak self] error in
+        var playbackURL = url
+        let positionScript = NSAppleScript(source: """
+            tell application id "com.google.Chrome"
+                execute active tab of front window javascript "(() => { const player = document.querySelector('#movie_player'); const video = player?.querySelector('video') ?? document.querySelector('video'); return player?.classList.contains('ad-showing') || !video || !Number.isFinite(video.currentTime) ? 0 : Math.floor(video.currentTime); })()"
+            end tell
+            """)
+        var positionError: NSDictionary?
+        let position = positionScript?.executeAndReturnError(&positionError).int32Value ?? 0
+        if position > 0, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = [URLQueryItem(name: "t", value: String(position))]
+            playbackURL = components.url ?? url
+        }
+        if let positionError {
+            log.info("Could not read Chrome playback position: \(String(describing: positionError), privacy: .private)")
+        }
+
+        manager.openURL(playbackURL, on: device) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
                 self?.showYouTubeError(error.localizedDescription)
