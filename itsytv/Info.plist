@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Itsytv reads the active Chrome tab when you choose to play a YouTube video on Apple TV.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>itsytv needs local network access to discover and control Apple TV devices on your network.</string>
 	<key>NSBonjourServices</key>

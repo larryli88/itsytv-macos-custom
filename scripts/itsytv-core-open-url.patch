@@ -1,0 +1,39 @@
+diff --git a/Sources/ItsytvCore/Protocol/AppleTVManager.swift b/Sources/ItsytvCore/Protocol/AppleTVManager.swift
+index 93792ee..35906fb 100644
+--- a/Sources/ItsytvCore/Protocol/AppleTVManager.swift
++++ b/Sources/ItsytvCore/Protocol/AppleTVManager.swift
+@@ -419,6 +419,15 @@ public final class AppleTVManager {
+         }
+     }
+ 
++    public func openURL(_ url: URL, on device: AppleTVDevice, completion: @escaping (Swift.Error?) -> Void) {
++        if connectedDeviceID != device.id || connectionStatus != .connected {
++            connect(to: device)
++        }
++        performOrQueueCompanionCommand { [weak self] in
++            self?.connection?.openURL(url, completion: completion)
++        }
++    }
++
+     /// Update the Apple TV text field to match `newText`.
+     ///
+     /// Sends only the diff: appends new characters when typing forward,
+diff --git a/Sources/ItsytvCore/Protocol/CompanionCommands.swift b/Sources/ItsytvCore/Protocol/CompanionCommands.swift
+index 20b2b71..1c179c3 100644
+--- a/Sources/ItsytvCore/Protocol/CompanionCommands.swift
++++ b/Sources/ItsytvCore/Protocol/CompanionCommands.swift
+@@ -190,6 +190,14 @@ extension CompanionConnection {
+         )
+     }
+ 
++    func openURL(_ url: URL, completion: @escaping (Swift.Error?) -> Void) {
++        sendRequest(
++            eventName: "_launchApp",
++            content: .dictionary([("_urlS", .string(url.absoluteString))]),
++            completion: completion
++        )
++    }
++
+     /// Start a text input session. The response contains a session UUID and current text.
+     func startTextInput(responseHandler: @escaping (OPACK.Value) -> Void) {
+         sendRequest(eventName: "_tiStart", content: .dict([]), responseHandler: responseHandler)

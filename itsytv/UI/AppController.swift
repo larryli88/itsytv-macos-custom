@@ -185,6 +185,51 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
+    #if !APPSTORE
+    private func playChromeYouTubeOnTV() {
+        guard let device = manager.discoveredDevices.first(where: {
+            $0.name == "tv" && KeychainStorage.load(for: $0.id) != nil
+        }) else {
+            showYouTubeError("Make sure the paired Apple TV named tv is available.")
+            return
+        }
+
+        var error: NSDictionary?
+        let script = NSAppleScript(source: """
+            if application id "com.google.Chrome" is running then
+                tell application id "com.google.Chrome"
+                    if (count of windows) > 0 then return URL of active tab of front window
+                end tell
+            end if
+            return ""
+            """)
+        let address = script?.executeAndReturnError(&error).stringValue
+        if let error {
+            showYouTubeError(error[NSAppleScript.errorMessage] as? String ?? "Could not read the Chrome tab.")
+            return
+        }
+        guard let address, let url = ChromeYouTube.playbackURL(from: address) else {
+            showYouTubeError("Open a YouTube video in Chrome’s active tab and try again.")
+            return
+        }
+
+        manager.openURL(url, on: device) { [weak self] error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.showYouTubeError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func showYouTubeError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Could not play YouTube on tv"
+        alert.informativeText = message
+        NSApp.activate()
+        alert.runModal()
+    }
+    #endif
+
     // MARK: - Menu building
 
     private func rebuildMenu() {
@@ -222,6 +267,11 @@ final class AppController: NSObject, NSMenuDelegate {
             break
         default:
             menu.addItem(NSMenuItem.separator())
+            #if !APPSTORE
+            menu.addItem(createActionItem(title: "Play Chrome YouTube on tv", symbolName: "play.tv") { [weak self] in
+                DispatchQueue.main.async { self?.playChromeYouTubeOnTV() }
+            })
+            #endif
             let loginItem = createCheckboxItem(
                 title: "Launch at login",
                 isOn: SMAppService.mainApp.status == .enabled

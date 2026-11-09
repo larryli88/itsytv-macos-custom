@@ -228,3 +228,19 @@ MIT License (c) 2026 Nick Ustinov – see [LICENSE](LICENSE) for details.
 ## Acknowledgements
 
 Protocol implementation informed by [pyatv](https://github.com/postlund/pyatv), the comprehensive Python library for Apple TV control.
+
+## This custom build
+
+Left-click the status icon to open the paired Apple TV named `tv`. Right-click
+for the device menu, including **Play Chrome YouTube on tv**. Open a YouTube
+video in Chrome's active tab before using the command. Allow Itsytv to control
+Chrome if macOS asks. The command opens the video on the TV from the beginning.
+
+Before generating the Xcode project for a fresh checkout, prepare the sibling
+`itsytv-core` checkout with the matching revision and protocol patch:
+
+```sh
+git -C ../itsytv-core checkout 5538245fc3baa030c7da90d919893b4bee64ca05
+git -C ../itsytv-core apply "$PWD/scripts/itsytv-core-open-url.patch"
+xcodegen generate
+```
