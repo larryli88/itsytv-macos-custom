@@ -37,6 +37,10 @@ class HighlightingMenuItemView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard let window else { return }
+        let pointer = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        guard visibleRect.contains(convert(pointer, from: nil)) else { return }
+
         isMouseInside = true
         updateTextColors(highlighted: true)
         needsDisplay = true
