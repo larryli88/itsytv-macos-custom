@@ -206,25 +206,6 @@ struct NowPlayingBar: View {
         let hasContent = np != nil
 
         VStack(spacing: 6) {
-            // Artwork — full width, square
-            if let data = np?.artworkData, let image = NSImage(data: data) {
-                Color.clear
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 160)
-                    .overlay {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    }
-                    .clipped()
-                    .cornerRadius(6)
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(.quaternary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 160)
-            }
-
             // Title + artist
             VStack(spacing: 2) {
                 Text(np?.title ?? " ")
