@@ -218,29 +218,58 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        var playbackURL = url
         let positionScript = NSAppleScript(source: """
             tell application id "com.google.Chrome"
-                execute active tab of front window javascript "(() => { const player = document.querySelector('#movie_player'); const video = player?.querySelector('video') ?? document.querySelector('video'); return player?.classList.contains('ad-showing') || !video || !Number.isFinite(video.currentTime) ? 0 : Math.floor(video.currentTime); })()"
+                execute active tab of front window javascript "(() => { const player = document.querySelector('#movie_player'); const video = player?.querySelector('video') ?? document.querySelector('video'); const data = player?.getVideoData?.(); return JSON.stringify({ id: data?.video_id, title: data?.title, position: video?.currentTime, duration: video?.duration, ad: player?.classList.contains('ad-showing') === true }); })()"
             end tell
             """)
         var positionError: NSDictionary?
-        let position = positionScript?.executeAndReturnError(&positionError).int32Value ?? 0
-        if position > 0, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            components.queryItems = [URLQueryItem(name: "t", value: String(position))]
-            playbackURL = components.url ?? url
-        }
-        if let positionError {
-            log.info("Could not read Chrome playback position: \(String(describing: positionError), privacy: .private)")
-        }
+        let playback = positionScript?.executeAndReturnError(&positionError).stringValue
+            .flatMap { try? JSONDecoder().decode(ChromePlayback.self, from: Data($0.utf8)) }
 
-        manager.openURL(playbackURL, on: device) { [weak self] error in
-            guard let error else { return }
-            DispatchQueue.main.async {
-                self?.showYouTubeError(error.localizedDescription)
+        pendingYouTubeSeek?.cancel()
+        manager.openURL(url, on: device) { [weak self] error in
+            if let error {
+                DispatchQueue.main.async { self?.showYouTubeError(error.localizedDescription) }
             }
         }
+        guard let playback, playback.id == url.lastPathComponent,
+              !playback.ad, let position = playback.position, position > 0,
+              let duration = playback.duration, position < duration,
+              let title = playback.title, !title.isEmpty else { return }
+
+        pendingYouTubeSeek = Task { @MainActor [weak self] in
+            for _ in 0..<60 {
+                do {
+                    try await Task.sleep(for: .milliseconds(500))
+                } catch {
+                    return
+                }
+                guard let self, manager.connectedDeviceID == device.id else { return }
+                let mrp = manager.mrpManager
+                guard mrp.isConnected, mrp.activeAppBundleID == "com.google.ios.youtube",
+                      let media = mrp.nowPlaying, media.isPlaying,
+                      let remoteTitle = media.title,
+                      remoteTitle.compare(title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame,
+                      let remoteDuration = media.duration, abs(remoteDuration - duration) < 3 else { continue }
+
+                mrp.seekToPosition(position)
+                log.notice("YouTube handoff: requested seek to \(position, privacy: .public)s")
+                return
+            }
+            log.notice("YouTube handoff: timed out waiting for matching playback")
+        }
     }
+
+    private struct ChromePlayback: Decodable {
+        let id: String?
+        let title: String?
+        let position: Double?
+        let duration: Double?
+        let ad: Bool
+    }
+
+    private var pendingYouTubeSeek: Task<Void, Never>?
 
     private func showYouTubeError(_ message: String) {
         let alert = NSAlert()
