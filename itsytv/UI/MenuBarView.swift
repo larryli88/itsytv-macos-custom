@@ -200,16 +200,45 @@ struct RemoteControlView: View {
 struct NowPlayingBar: View {
     @Environment(AppleTVManager.self) private var manager
 
+    @State private var pendingSeconds = 0
+    @State private var pendingSeek: Task<Void, Never>?
+
+    private func cancelPendingSeek() {
+        pendingSeek?.cancel()
+        pendingSeek = nil
+        pendingSeconds = 0
+    }
+
     private var canSeek: Bool {
         guard let media = manager.mrpManager.nowPlaying,
               let duration = media.duration else { return false }
         return media.elapsedTime != nil && duration.isFinite && duration > 0
     }
 
-    private func seek(by seconds: TimeInterval) {
+    private func seek(by seconds: Int) {
         let mrp = manager.mrpManager
-        guard canSeek, let media = mrp.nowPlaying, let duration = media.duration else { return }
-        mrp.seekToPosition(min(duration, max(0, media.currentPosition + seconds)))
+        guard canSeek, let media = mrp.nowPlaying else { return }
+        let deviceID = manager.connectedDeviceID
+        let appID = mrp.activeAppBundleID
+
+        pendingSeek?.cancel()
+        pendingSeconds += seconds
+        pendingSeek = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return
+            }
+
+            let offset = pendingSeconds
+            pendingSeconds = 0
+            pendingSeek = nil
+            guard offset != 0, canSeek, manager.connectedDeviceID == deviceID,
+                  mrp.activeAppBundleID == appID, let current = mrp.nowPlaying,
+                  current.title == media.title, current.duration == media.duration,
+                  let duration = current.duration else { return }
+            mrp.seekToPosition(min(duration, max(0, current.currentPosition + Double(offset))))
+        }
     }
 
     var body: some View {
@@ -271,16 +300,28 @@ struct NowPlayingBar: View {
             }
             .foregroundStyle(.secondary)
 
+            Text("\(pendingSeconds > 0 ? "+" : "")\(pendingSeconds)s")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .opacity(pendingSeconds == 0 ? 0 : 1)
+                .accessibilityHidden(pendingSeconds == 0)
+
             // Progress bar
             NowPlayingProgress(
                 nowPlaying: np,
                 duration: np?.duration ?? 0,
-                onSeek: { position in mrp.seekToPosition(position) }
+                onSeek: { position in
+                    cancelPendingSeek()
+                    mrp.seekToPosition(position)
+                }
             )
             .opacity(hasContent && (np?.duration ?? 0) > 0 ? 1 : 0.3)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 16)
+        .onDisappear(perform: cancelPendingSeek)
+        .onChange(of: np?.title) { cancelPendingSeek() }
+        .onChange(of: manager.connectedDeviceID) { cancelPendingSeek() }
     }
 }
 
