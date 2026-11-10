@@ -103,11 +103,11 @@ struct RemoteControlView: View {
                             #if !APPSTORE
                             if manager.connectedDeviceName == "tv" {
                                 Button(action: onPlayChromeYouTube) {
-                                    Label("Play Chrome YouTube", systemImage: "play.tv")
+                                    Label("Play YouTube on TV", systemImage: "play.tv")
                                         .font(.caption)
                                         .frame(maxWidth: .infinity)
                                 }
-                                .help("Play the active Chrome YouTube video on tv")
+                                .help("Play YouTube on TV (Y)")
                                 .padding(.horizontal, 8)
                             }
                             #endif

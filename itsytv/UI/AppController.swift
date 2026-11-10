@@ -324,7 +324,7 @@ final class AppController: NSObject, NSMenuDelegate {
         default:
             menu.addItem(NSMenuItem.separator())
             #if !APPSTORE
-            menu.addItem(createActionItem(title: "Play Chrome YouTube on tv", symbolName: "play.tv") { [weak self] in
+            menu.addItem(createActionItem(title: "Play YouTube on TV", symbolName: "play.tv") { [weak self] in
                 DispatchQueue.main.async { self?.playChromeYouTubeOnTV() }
             })
             #endif
@@ -718,6 +718,19 @@ final class AppController: NSObject, NSMenuDelegate {
                 r = current.nextResponder
             }
         }
+
+        #if !APPSTORE
+        let shortcutModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        if let panel, panel.isKeyWindow, event.window === panel,
+           event.modifierFlags.intersection(shortcutModifiers).isEmpty,
+           event.charactersIgnoringModifiers?.lowercased() == "y",
+           manager.connectedDeviceName == "tv", manager.connectionStatus == .connected {
+            if !event.isARepeat {
+                playChromeYouTubeOnTV()
+            }
+            return true
+        }
+        #endif
 
         let button: CompanionButton? = switch event.keyCode {
         case 126: .up
