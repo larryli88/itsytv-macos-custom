@@ -200,6 +200,18 @@ struct RemoteControlView: View {
 struct NowPlayingBar: View {
     @Environment(AppleTVManager.self) private var manager
 
+    private var canSeek: Bool {
+        guard let media = manager.mrpManager.nowPlaying,
+              let duration = media.duration else { return false }
+        return media.elapsedTime != nil && duration.isFinite && duration > 0
+    }
+
+    private func seek(by seconds: TimeInterval) {
+        let mrp = manager.mrpManager
+        guard canSeek, let media = mrp.nowPlaying, let duration = media.duration else { return }
+        mrp.seekToPosition(min(duration, max(0, media.currentPosition + seconds)))
+    }
+
     var body: some View {
         let mrp = manager.mrpManager
         let np = mrp.nowPlaying
@@ -227,13 +239,15 @@ struct NowPlayingBar: View {
             // because apps like YouTube ignore MRP SendCommandMessage.
             HStack(spacing: 28) {
                 Button {
-                    mrp.sendCommand(.previousTrack)
+                    seek(by: -5)
                 } label: {
-                    Image(systemName: "backward.fill")
+                    Image(systemName: "gobackward.5")
                         .font(.system(size: 18))
                 }
                 .buttonStyle(.plain)
-                .disabled(!hasContent || !mrp.supportedCommands.contains(.previousTrack))
+                .disabled(!canSeek)
+                .accessibilityLabel("Back 5 seconds")
+                .help("Back 5 seconds")
 
                 Button {
                     manager.pressButton(.playPause)
@@ -245,13 +259,15 @@ struct NowPlayingBar: View {
                 .disabled(!hasContent)
 
                 Button {
-                    mrp.sendCommand(.nextTrack)
+                    seek(by: 5)
                 } label: {
-                    Image(systemName: "forward.fill")
+                    Image(systemName: "goforward.5")
                         .font(.system(size: 18))
                 }
                 .buttonStyle(.plain)
-                .disabled(!hasContent || !mrp.supportedCommands.contains(.nextTrack))
+                .disabled(!canSeek)
+                .accessibilityLabel("Forward 5 seconds")
+                .help("Forward 5 seconds")
             }
             .foregroundStyle(.secondary)
 
