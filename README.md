@@ -231,6 +231,8 @@ Protocol implementation informed by [pyatv](https://github.com/postlund/pyatv), 
 
 ## This custom build
 
+This is an unofficial modification of [Itsytv by Nick Ustinov](https://github.com/nickustinov/itsytv-macos), distributed under the original [MIT License](LICENSE). The build instructions below also use [ItsytvCore](https://github.com/nickustinov/itsytv-core), which its upstream README identifies as MIT licensed.
+
 Left-click the status icon to open the paired Apple TV named `tv`. Right-click
 for the device menu, including **Play Chrome YouTube on tv**. Open a YouTube
 video in Chrome's active tab before using the command. Allow Itsytv to control
