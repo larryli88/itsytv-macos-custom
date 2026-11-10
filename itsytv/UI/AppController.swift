@@ -220,7 +220,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
         let positionScript = NSAppleScript(source: """
             tell application id "com.google.Chrome"
-                execute active tab of front window javascript "(() => { const player = document.querySelector('#movie_player'); const video = player?.querySelector('video') ?? document.querySelector('video'); const data = player?.getVideoData?.(); return JSON.stringify({ id: data?.video_id, title: data?.title, position: video?.currentTime, duration: video?.duration, ad: player?.classList.contains('ad-showing') === true }); })()"
+                execute active tab of front window javascript "(() => { const player = document.querySelector('#movie_player'); const video = player?.querySelector('video') ?? document.querySelector('video'); return JSON.stringify({ address: location.href, title: document.title.replace(/ - YouTube$/, ''), position: video?.currentTime, duration: video?.duration, ad: player?.classList.contains('ad-showing') === true }); })()"
             end tell
             """)
         var positionError: NSDictionary?
@@ -233,10 +233,15 @@ final class AppController: NSObject, NSMenuDelegate {
                 DispatchQueue.main.async { self?.showYouTubeError(error.localizedDescription) }
             }
         }
-        guard let playback, playback.id == url.lastPathComponent,
+        guard let playback, ChromeYouTube.playbackURL(from: playback.address) == url,
               !playback.ad, let position = playback.position, position > 0,
               let duration = playback.duration, position < duration,
-              let title = playback.title, !title.isEmpty else { return }
+              let title = playback.title, !title.isEmpty else {
+            let errorCode = positionError?[NSAppleScript.errorNumber] as? Int ?? 0
+            log.notice("YouTube handoff: no usable Chrome position (error \(errorCode, privacy: .public))")
+            return
+        }
+        log.notice("YouTube handoff: waiting to seek to \(position, privacy: .public)s")
 
         pendingYouTubeSeek = Task { @MainActor [weak self] in
             for _ in 0..<60 {
@@ -245,7 +250,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 } catch {
                     return
                 }
-                guard let self, manager.connectedDeviceID == device.id else { return }
+                guard let self else { return }
+                guard manager.connectedDeviceID == device.id else { continue }
                 let mrp = manager.mrpManager
                 guard mrp.isConnected, mrp.activeAppBundleID == "com.google.ios.youtube",
                       let media = mrp.nowPlaying, media.isPlaying,
@@ -262,7 +268,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private struct ChromePlayback: Decodable {
-        let id: String?
+        let address: String
         let title: String?
         let position: Double?
         let duration: Double?
