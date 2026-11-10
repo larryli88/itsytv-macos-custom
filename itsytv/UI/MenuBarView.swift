@@ -7,6 +7,7 @@ enum RemoteTab: String, CaseIterable {
 }
 
 struct RemoteControlView: View {
+    let onPlayChromeYouTube: () -> Void
     @Environment(AppleTVManager.self) private var manager
     @State private var selectedTab: RemoteTab = .remote
     @State private var showingKeyboard = false
@@ -99,6 +100,17 @@ struct RemoteControlView: View {
                         // Remote always rendered (hidden when on apps to keep size)
                         VStack(spacing: 10) {
                             RemoteTabContent(swipeEnabled: selectedTab == .remote)
+                            #if !APPSTORE
+                            if manager.connectedDeviceName == "tv" {
+                                Button(action: onPlayChromeYouTube) {
+                                    Label("Play Chrome YouTube", systemImage: "play.tv")
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .help("Play the active Chrome YouTube video on tv")
+                                .padding(.horizontal, 8)
+                            }
+                            #endif
                             NowPlayingBar()
                         }
                         .opacity(selectedTab == .remote ? 1 : 0)

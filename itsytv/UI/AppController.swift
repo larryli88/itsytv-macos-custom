@@ -501,7 +501,11 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        let panelContent = PanelContentView()
+        let panelContent = PanelContentView { [weak self] in
+            #if !APPSTORE
+            self?.playChromeYouTubeOnTV()
+            #endif
+        }
             .environment(manager)
             .environment(iconLoader)
 
@@ -987,13 +991,14 @@ struct PanelCloseButton: View {
 }
 
 struct PanelContentView: View {
+    let onPlayChromeYouTube: () -> Void
     @Environment(AppleTVManager.self) private var manager
 
     var body: some View {
         VStack(spacing: 0) {
             switch manager.connectionStatus {
             case .connecting, .connected:
-                RemoteControlView()
+                RemoteControlView(onPlayChromeYouTube: onPlayChromeYouTube)
             case .error(let message):
                 ErrorView(message: message)
             default:
