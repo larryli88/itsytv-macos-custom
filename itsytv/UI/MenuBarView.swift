@@ -8,6 +8,7 @@ enum RemoteTab: String, CaseIterable {
 
 struct RemoteControlView: View {
     let onPlayChromeYouTube: () -> Void
+    let onPlayChromeBilibili: () -> Void
     @Environment(AppleTVManager.self) private var manager
     @State private var selectedTab: RemoteTab = .remote
     @State private var showingKeyboard = false
@@ -103,11 +104,32 @@ struct RemoteControlView: View {
                             #if !APPSTORE
                             if manager.connectedDeviceName == "tv" {
                                 Button(action: onPlayChromeYouTube) {
-                                    Label("Play YouTube on TV", systemImage: "play.tv")
+                                    Label {
+                                        Text("Play YouTube on TV")
+                                    } icon: {
+                                        Image("YouTubePlayback")
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 13, height: 13)
+                                    }
                                         .font(.caption)
                                         .frame(maxWidth: .infinity)
                                 }
                                 .help("Play YouTube on TV (Y)")
+                                .padding(.horizontal, 8)
+                                Button(action: onPlayChromeBilibili) {
+                                    Label {
+                                        Text("Play Bilibili on TV")
+                                    } icon: {
+                                        Image("BilibiliPlayback")
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 13, height: 13)
+                                    }
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .help("Test opening the active Bilibili video on Apple TV")
                                 .padding(.horizontal, 8)
                             }
                             #endif

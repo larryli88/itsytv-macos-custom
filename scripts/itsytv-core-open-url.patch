@@ -1,8 +1,53 @@
 diff --git a/Sources/ItsytvCore/Protocol/AppleTVManager.swift b/Sources/ItsytvCore/Protocol/AppleTVManager.swift
-index 93792ee..35906fb 100644
+index 93792ee..535d7f3 100644
 --- a/Sources/ItsytvCore/Protocol/AppleTVManager.swift
 +++ b/Sources/ItsytvCore/Protocol/AppleTVManager.swift
-@@ -419,6 +419,15 @@ public final class AppleTVManager {
+@@ -162,6 +162,13 @@ public final class AppleTVManager {
+         return true
+     }
+ 
++    public func connectToLastPairedDevice(named name: String) -> Bool {
++        guard let device = LastConnectedDeviceStorage.load(), device.name == name,
++              KeychainStorage.load(for: device.id) != nil else { return false }
++        connect(to: device)
++        return true
++    }
++
+     /// Device ID of the most recently connected Apple TV (persisted across
+     /// launches), or `nil` if none has ever connected.
+     public var lastConnectedDeviceID: String? {
+@@ -182,12 +189,12 @@ public final class AppleTVManager {
+         let conn = CompanionConnection()
+         self.connection = conn
+ 
+-        conn.onDisconnect = { [weak self] error in
++        conn.onDisconnect = { [weak self, weak conn] error in
+             DispatchQueue.main.async {
+-                guard let self else { return }
++                guard let self, let conn, self.connection === conn else { return }
+                 // Once connected or mid-verify after pairing, the companion link
+                 // closing is expected — MRP runs over the AirPlay tunnel.
+-                if self.connectionStatus == .connected || self.currentCredentials != nil {
++                if self.connectionStatus == .connected {
+                     log.info("Companion link closed while session active — reconnecting")
+                     self.connection?.stopKeepAlive()
+                     self.connection?.stopTextInput()
+@@ -220,7 +227,13 @@ public final class AppleTVManager {
+             conn.onConnect = { [weak self] in
+                 self?.startPairVerify(credentials: credentials)
+             }
+-            conn.connectToService(name: device.name)
++            conn.connectToService(name: device.name, deviceID: device.id)
++            DispatchQueue.main.asyncAfter(deadline: .now() + 7) { [weak self, weak conn] in
++                guard let self, let conn, self.connection === conn,
++                      self.connectionStatus == .connecting else { return }
++                self.disconnect()
++                self.connectionStatus = .error("Apple TV did not respond. Wake it and try again.")
++            }
+         } else {
+             // Need to pair first
+             connectedDeviceName = device.name
+@@ -419,6 +432,15 @@ public final class AppleTVManager {
          }
      }
  
@@ -18,11 +63,43 @@ index 93792ee..35906fb 100644
      /// Update the Apple TV text field to match `newText`.
      ///
      /// Sends only the diff: appends new characters when typing forward,
+@@ -693,6 +715,8 @@ public final class AppleTVManager {
+             } catch {
+                 log.error("Pair-verify M2 failed: \(error.localizedDescription)")
+ 
++                if connection?.retryCachedAddressViaBonjour() == true { return }
++
+                 // Identity mismatch means the Apple TV was factory-reset or replaced.
+                 // Delete stale credentials and start fresh pairing automatically.
+                 if let device = connectedDevice, case .identityMismatch = error as? PairVerify.Error {
+@@ -806,9 +830,11 @@ public final class AppleTVManager {
+             // tvOS the device replies harmlessly or ignores it — the 2 s
+             // timeout below makes sure we still proceed in either case.
+             var didProceed = false
+-            let proceed: () -> Void = { [weak self] in
++            let sessionConnection = self?.connection
++            let proceed: () -> Void = { [weak self, weak sessionConnection] in
+                 DispatchQueue.main.async {
+-                    guard !didProceed else { return }
++                    guard !didProceed, let sessionConnection,
++                          self?.connection === sessionConnection else { return }
+                     didProceed = true
+                     self?.connectionStatus = .connected
+                     self?.discovery.pause()
+@@ -857,7 +883,7 @@ public final class AppleTVManager {
+         conn.onConnect = { [weak self] in
+             self?.startPairVerify(credentials: credentials)
+         }
+-        conn.connectToService(name: device.name)
++        conn.connectToService(name: device.name, deviceID: device.id)
+     }
+ 
+     private func performOrQueueCompanionCommand(_ command: @escaping () -> Void) {
 diff --git a/Sources/ItsytvCore/Protocol/CompanionCommands.swift b/Sources/ItsytvCore/Protocol/CompanionCommands.swift
-index 20b2b71..1c179c3 100644
+index 20b2b71..502752c 100644
 --- a/Sources/ItsytvCore/Protocol/CompanionCommands.swift
 +++ b/Sources/ItsytvCore/Protocol/CompanionCommands.swift
-@@ -190,6 +190,14 @@ extension CompanionConnection {
+@@ -190,6 +190,22 @@ extension CompanionConnection {
          )
      }
  
@@ -30,10 +107,140 @@ index 20b2b71..1c179c3 100644
 +        sendRequest(
 +            eventName: "_launchApp",
 +            content: .dictionary([("_urlS", .string(url.absoluteString))]),
-+            completion: completion
++            responseHandler: { response in
++                if let message = response["_em"]?.stringValue ?? response["_c"]?["_em"]?.stringValue {
++                    completion(NSError(domain: "Itsytv.OpenURL", code: 1,
++                                       userInfo: [NSLocalizedDescriptionKey: message]))
++                }
++            },
++            completion: { error in
++                if let error { completion(error) }
++            }
 +        )
 +    }
 +
      /// Start a text input session. The response contains a session UUID and current text.
      func startTextInput(responseHandler: @escaping (OPACK.Value) -> Void) {
          sendRequest(eventName: "_tiStart", content: .dict([]), responseHandler: responseHandler)
+diff --git a/Sources/ItsytvCore/Protocol/CompanionConnection.swift b/Sources/ItsytvCore/Protocol/CompanionConnection.swift
+index 04f63de..ab0cad5 100644
+--- a/Sources/ItsytvCore/Protocol/CompanionConnection.swift
++++ b/Sources/ItsytvCore/Protocol/CompanionConnection.swift
+@@ -19,6 +19,22 @@ final class CompanionConnection {
+     var onConnect: (() -> Void)?
+     var onDisconnect: ((Swift.Error?) -> Void)?
+ 
++    private var cachedServiceName: String?
++    private var addressCacheKey: String?
++
++    func retryCachedAddressViaBonjour() -> Bool {
++        guard let name = cachedServiceName else { return false }
++        cachedServiceName = nil
++        if let addressCacheKey {
++            UserDefaults.standard.removeObject(forKey: addressCacheKey)
++        }
++        disconnect()
++        connectToService(name: name, deviceID: addressCacheKey.map {
++            String($0.dropFirst("companionAddress.".count))
++        })
++        return true
++    }
++
+     init() {
+         nextXID = Int64.random(in: 1...10000)
+     }
+@@ -26,23 +42,30 @@ final class CompanionConnection {
+     func connect(to endpoint: NWEndpoint) {
+         let connection = NWConnection(to: endpoint, using: .tcp)
+ 
+-        connection.stateUpdateHandler = { [weak self] state in
++        self.connection = connection
++        connection.stateUpdateHandler = { [weak self, weak connection] state in
++            guard let self, let connection, self.connection === connection else { return }
+             switch state {
+             case .ready:
+                 log.info("Connection ready")
+-                self?.onConnect?()
+-                self?.startReceiving()
++                self.onConnect?()
++                self.startReceiving()
+             case .failed(let error):
+-                self?.onDisconnect?(error)
++                if !self.retryCachedAddressViaBonjour() { self.onDisconnect?(error) }
+             case .cancelled:
+-                self?.onDisconnect?(nil)
++                self.onDisconnect?(nil)
+             default:
+                 break
+             }
+         }
+ 
+         connection.start(queue: .global(qos: .userInitiated))
+-        self.connection = connection
++        if cachedServiceName != nil {
++            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 3) { [weak self, weak connection] in
++                guard let self, let connection, self.connection === connection else { return }
++                _ = self.retryCachedAddressViaBonjour()
++            }
++        }
+     }
+ 
+     func connect(host: String, port: UInt16) {
+@@ -53,7 +76,16 @@ final class CompanionConnection {
+         connect(to: endpoint)
+     }
+ 
+-    func connectToService(name: String) {
++    func connectToService(name: String, deviceID: String? = nil) {
++        addressCacheKey = deviceID.map { "companionAddress.\($0)" }
++        if let addressCacheKey,
++           let cached = UserDefaults.standard.dictionary(forKey: addressCacheKey),
++           let host = cached["host"] as? String,
++           let port = cached["port"] as? UInt16, port > 0 {
++            cachedServiceName = name
++            connect(host: host, port: port)
++            return
++        }
+         log.info("Connecting to service \(name)")
+         let endpoint = NWEndpoint.service(
+             name: name,
+@@ -75,6 +107,15 @@ final class CompanionConnection {
+ 
+     func enableEncryption(_ crypto: CompanionCrypto) {
+         self.crypto = crypto
++        cachedServiceName = nil
++        guard let addressCacheKey,
++              case let .hostPort(host, port)? = connection?.currentPath?.remoteEndpoint else { return }
++        switch host {
++        case .ipv4, .ipv6:
++            UserDefaults.standard.set(["host": String(describing: host), "port": Int(port.rawValue)], forKey: addressCacheKey)
++        default:
++            break
++        }
+     }
+ 
+     /// Start sending periodic NoOp frames to keep the connection alive.
+@@ -190,7 +231,9 @@ final class CompanionConnection {
+     // MARK: - Receiving
+ 
+     private func startReceiving() {
+-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
++        guard let connection else { return }
++        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, weak connection] content, _, isComplete, error in
++            guard let connection, self?.connection === connection else { return }
+             if let content {
+                 log.debug("Received \(content.count) bytes on wire (buffer was \(self?.buffer.count ?? 0) bytes)")
+                 self?.buffer.append(content)
+@@ -198,10 +241,10 @@ final class CompanionConnection {
+             }
+             if isComplete {
+                 log.info("Connection complete (EOF)")
+-                self?.onDisconnect?(nil)
++                if self?.retryCachedAddressViaBonjour() == false { self?.onDisconnect?(nil) }
+             } else if let error {
+                 log.error("Connection error: \(error.localizedDescription)")
+-                self?.onDisconnect?(error)
++                if self?.retryCachedAddressViaBonjour() == false { self?.onDisconnect?(error) }
+             } else {
+                 self?.startReceiving()
+             }

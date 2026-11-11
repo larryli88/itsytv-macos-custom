@@ -119,21 +119,26 @@ final class AppController: NSObject, NSMenuDelegate {
         let defaultDevice = manager.discoveredDevices.first {
             $0.name == "tv" && KeychainStorage.load(for: $0.id) != nil
         }
-        guard let defaultDevice else {
-            showMenu()
-            return
-        }
-
-        NSApp.activate(ignoringOtherApps: true)
-        if manager.connectedDeviceID == defaultDevice.id,
+        if manager.connectedDeviceName == "tv",
            manager.connectionStatus == .connected || manager.connectionStatus == .connecting {
+            NSApp.activate(ignoringOtherApps: true)
             showPanel()
             panel?.makeKeyAndOrderFront(nil)
             return
         }
 
-        dismissPanel()
-        connectAndShow(defaultDevice)
+        if let defaultDevice {
+            dismissPanel()
+            connectAndShow(defaultDevice)
+        } else {
+            dismissPanel()
+            guard manager.connectToLastPairedDevice(named: "tv") else {
+                showMenu()
+                return
+            }
+            showPanel()
+        }
+        manager.pressButton(.wake)
     }
 
     /// Pop the status menu by temporarily attaching it, then detach on close
@@ -200,15 +205,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
 
         var error: NSDictionary?
-        let script = NSAppleScript(source: """
-            if application id "com.google.Chrome" is running then
-                tell application id "com.google.Chrome"
-                    if (count of windows) > 0 then return URL of active tab of front window
-                end tell
-            end if
-            return ""
-            """)
-        let address = script?.executeAndReturnError(&error).stringValue
+        let address = activeChromeAddress(error: &error)
         if let error {
             showYouTubeError(error[NSAppleScript.errorMessage] as? String ?? "Could not read the Chrome tab.")
             return
@@ -277,9 +274,68 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private var pendingYouTubeSeek: Task<Void, Never>?
 
+    private func activeChromeAddress(error: inout NSDictionary?) -> String? {
+        let script = NSAppleScript(source: """
+            if application id "com.google.Chrome" is running then
+                tell application id "com.google.Chrome"
+                    if (count of windows) > 0 then return URL of active tab of front window
+                end tell
+            end if
+            return ""
+            """)
+        return script?.executeAndReturnError(&error).stringValue
+    }
+
+    private func playChromeBilibiliOnTV() {
+        guard let device = manager.discoveredDevices.first(where: {
+            $0.name == "tv" && KeychainStorage.load(for: $0.id) != nil
+        }) else {
+            showPlaybackError("Could not play Bilibili on TV", "Make sure the paired Apple TV named tv is available.")
+            return
+        }
+
+        var error: NSDictionary?
+        guard let address = activeChromeAddress(error: &error),
+              let page = URLComponents(string: address), page.scheme == "https",
+              let host = page.host, ["www.bilibili.com", "m.bilibili.com", "bilibili.com"].contains(host.lowercased()),
+              page.path.range(of: #"^/video/(BV[A-Za-z0-9]+)/?$"#, options: .regularExpression) != nil,
+              var video = URLComponents(string: "danmutv-jieyu://play") else {
+            showPlaybackError("Could not play Bilibili on TV",
+                              error?[NSAppleScript.errorMessage] as? String ?? "Open a Bilibili video in Chrome and try again.")
+            return
+        }
+        video.path = "/" + String(page.path.split(separator: "/").last ?? "")
+        var query = page.queryItems?.filter { $0.name == "p" } ?? []
+        let script = NSAppleScript(source: """
+            tell application id "com.google.Chrome"
+                execute active tab of front window javascript "(() => { const video = document.querySelector('#bilibili-player video') ?? document.querySelector('video'); return video && Number.isFinite(video.currentTime) ? String(video.currentTime) : ''; })()"
+            end tell
+            """)
+        var positionError: NSDictionary?
+        if let seconds = script?.executeAndReturnError(&positionError).stringValue.flatMap(Double.init),
+           seconds.isFinite, seconds >= 0,
+           activeChromeAddress(error: &error) == address {
+            query.append(URLQueryItem(name: "t", value: String(seconds)))
+        }
+        video.queryItems = query.isEmpty ? nil : query
+        guard let url = video.url else { return }
+
+        manager.openURL(url, on: device) { [weak self] error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.showPlaybackError("Could not play Bilibili on TV",
+                                        "Apple TV rejected the playback link. " + error.localizedDescription)
+            }
+        }
+    }
+
     private func showYouTubeError(_ message: String) {
+        showPlaybackError("Could not play YouTube on tv", message)
+    }
+
+    private func showPlaybackError(_ title: String, _ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Could not play YouTube on tv"
+        alert.messageText = title
         alert.informativeText = message
         NSApp.activate()
         alert.runModal()
@@ -501,11 +557,15 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        let panelContent = PanelContentView { [weak self] in
+        let panelContent = PanelContentView(onPlayChromeYouTube: { [weak self] in
             #if !APPSTORE
             self?.playChromeYouTubeOnTV()
             #endif
-        }
+        }, onPlayChromeBilibili: { [weak self] in
+            #if !APPSTORE
+            self?.playChromeBilibiliOnTV()
+            #endif
+        })
             .environment(manager)
             .environment(iconLoader)
 
@@ -1005,13 +1065,15 @@ struct PanelCloseButton: View {
 
 struct PanelContentView: View {
     let onPlayChromeYouTube: () -> Void
+    let onPlayChromeBilibili: () -> Void
     @Environment(AppleTVManager.self) private var manager
 
     var body: some View {
         VStack(spacing: 0) {
             switch manager.connectionStatus {
             case .connecting, .connected:
-                RemoteControlView(onPlayChromeYouTube: onPlayChromeYouTube)
+                RemoteControlView(onPlayChromeYouTube: onPlayChromeYouTube,
+                                  onPlayChromeBilibili: onPlayChromeBilibili)
             case .error(let message):
                 ErrorView(message: message)
             default:
